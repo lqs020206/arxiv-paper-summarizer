@@ -83,8 +83,9 @@
 
         // ArXiv搜索函数
         async function searchArxiv(keyword, startDate, endDate) {
-            const arxivUrl = `https://export.arxiv.org/api/query?search_query=all:${encodeURIComponent(keyword)}&sortBy=submittedDate&sortOrder=descending&max_results=30`;
-            
+            // const arxivUrl = `https://export.arxiv.org/api/query?search_query=all:${encodeURIComponent(keyword)}&sortBy=submittedDate&sortOrder=descending&max_results=30`;
+            const arxivUrl = `https://export.arxiv.org/api/query?search_query=ti:${encodeURIComponent(keyword)} OR abs:${encodeURIComponent(keyword)}&sortBy=submittedDate&sortOrder=descending&max_results=30`;
+
             const response = await fetch(arxivUrl);
             if (!response.ok) {
                 throw new Error(`ArXiv API请求失败: ${response.statusText}`);
