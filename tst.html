@@ -1,0 +1,546 @@
+<!DOCTYPE html>
+<html lang="zh">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>ArXiv论文摘要生成器</title>
+    <link href="https://cdn.jsdelivr.net/npm/bootstrap@5.1.3/dist/css/bootstrap.min.css" rel="stylesheet">
+    <style>
+        .loading {
+            display: none;
+        }
+        .loading.active {
+            display: block;
+        }
+        #results {
+            white-space: pre-wrap;
+        }
+        .progress-container {
+            margin-top: 20px;
+        }
+        /* 新增样式：复制按钮与标题对齐 */
+        .card-title {
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+        }
+        /* 隐藏选择论文数量的表单 */
+        #selectForm {
+            display: none;
+        }
+        /* 控制按钮布局 */
+        .control-buttons {
+            margin-top: 10px;
+        }
+    </style>
+</head>
+<body>
+    <div class="container mt-5">
+        <h1 class="mb-4">ArXiv论文摘要生成器</h1>
+        
+        <!-- 搜索表单 -->
+        <div class="card mb-4">
+            <div class="card-body">
+                <form id="searchForm">
+                    <div class="mb-3">
+                        <label for="keyword" class="form-label">关键词</label>
+                        <input type="text" class="form-control" id="keyword" placeholder="输入关键词" required>
+                    </div>
+                    <div class="row">
+                        <div class="col-md-6 mb-3">
+                            <label for="startDate" class="form-label">开始日期</label>
+                            <input type="date" class="form-control" id="startDate" required>
+                        </div>
+                        <div class="col-md-6 mb-3">
+                            <label for="endDate" class="form-label">结束日期</label>
+                            <input type="date" class="form-control" id="endDate" required>
+                        </div>
+                    </div>
+                    <button type="submit" class="btn btn-primary">搜索论文</button>
+                </form>
+            </div>
+        </div>
+
+        <!-- 选择论文数量的表单 -->
+        <div class="card mb-4" id="selectForm">
+            <div class="card-body">
+                <h5 class="card-title">选择论文数量</h5>
+                <p id="totalPapers"></p>
+                <ul id="paperList" class="list-group mb-3" style="max-height: 300px; overflow-y: auto;"></ul>
+                <form id="nForm" class="row g-3">
+                    <div class="col-auto">
+                        <label for="nPapers" class="visually-hidden">选择数量</label>
+                        <input type="number" class="form-control" id="nPapers" placeholder="输入数量" min="1" required>
+                    </div>
+                    <div class="col-auto">
+                        <button type="submit" class="btn btn-success mb-3">选择并生成摘要</button>
+                    </div>
+                </form>
+            </div>
+        </div>
+
+        <!-- 加载提示 -->
+        <div class="loading" id="loading">
+            <div class="alert alert-info">
+                正在搜索和处理论文，请稍候...
+            </div>
+        </div>
+
+        <!-- 进度条 -->
+        <div class="progress-container">
+            <div class="progress">
+                <div id="progressBar" class="progress-bar" role="progressbar" style="width: 0%;" aria-valuenow="0" aria-valuemin="0" aria-valuemax="100">0%</div>
+            </div>
+            <p id="progressText" class="mt-2">0 / 0 完成</p>
+        </div>
+
+        <!-- 控制按钮 -->
+        <div class="control-buttons mb-4" id="controlButtons" style="display: none;">
+            <button id="stopButton" class="btn btn-danger">停止</button>
+            <button id="startButton" class="btn btn-primary" style="display: none;">开始</button>
+        </div>
+
+        <!-- 摘要结果 -->
+        <div class="card mt-4" id="resultsCard" style="display: none;">
+            <div class="card-body">
+                <div class="d-flex justify-content-between align-items-center">
+                    <h5 class="card-title mb-0">摘要结果</h5>
+                    <button id="copyButton" class="btn btn-sm btn-secondary">一键复制</button>
+                </div>
+                <div id="results" class="mt-3"></div>
+            </div>
+        </div>
+    </div>
+
+    <!-- 复制成功提示 -->
+    <div id="copyAlert" class="alert alert-success alert-dismissible fade show" role="alert" style="position: fixed; top: 20px; right: 20px; display: none;">
+        已成功复制所有内容！
+        <button type="button" class="btn-close" data-bs-dismiss="alert" aria-label="关闭"></button>
+    </div>
+
+    <!-- 复制失败提示 -->
+    <div id="copyErrorAlert" class="alert alert-danger alert-dismissible fade show" role="alert" style="position: fixed; top: 20px; right: 20px; display: none;">
+        复制失败，请重试！
+        <button type="button" class="btn-close" data-bs-dismiss="alert" aria-label="关闭"></button>
+    </div>
+
+    <!-- 引入 Bootstrap 的 JavaScript -->
+    <script src="https://cdn.jsdelivr.net/npm/bootstrap@5.1.3/dist/js/bootstrap.bundle.min.js"></script>
+    <script>
+
+        const API_KEY = 'sk-gLb8Dsr65fx6HIV5ayBIlfmRDp3vx43AkRw5xDOiLAxfQ6qc'; // 请将此处替换为您的实际 API 密钥
+
+        // 延迟函数
+        function sleep(ms) {
+            return new Promise(resolve => setTimeout(resolve, ms));
+        }
+
+        // 设置结束日期为当前日期
+        document.addEventListener('DOMContentLoaded', () => {
+            document.getElementById('endDate').valueAsDate = new Date();
+        });
+
+        let allPapers = []; // 存储所有搜索到的论文
+        let selectedPapers = []; // 存储用户选择的论文
+        let isStopped = false; // 是否被停止
+        let isProcessing = false; // 是否正在处理
+        let currentIndex = 0; // 当前处理的论文索引
+
+        // ArXiv搜索函数
+        async function searchArxiv(keyword, startDate, endDate) {
+            const keywordsArray = keyword.split(' '); // 将关键词按空格分隔成数组
+            const searchQuery = keywordsArray.map(word => `(ti:"${word}" OR abs:"${word}")`).join(' AND '); // 每个关键词都要出现在标题或摘要中，用 AND 连接
+            const arxivUrl = `https://export.arxiv.org/api/query?search_query=${encodeURIComponent(searchQuery)}&sortBy=submittedDate&sortOrder=descending&max_results=100`; // 增加最大结果数以便用户选择
+
+            const response = await fetch(arxivUrl);
+            if (!response.ok) {
+                throw new Error(`ArXiv API请求失败: ${response.statusText}`);
+            }
+            const text = await response.text();
+            const parser = new DOMParser();
+            const xmlDoc = parser.parseFromString(text, "application/xml");
+            
+            const entries = xmlDoc.getElementsByTagName("entry");
+            const results = [];
+
+            for (let entry of entries) {
+                const published = new Date(entry.getElementsByTagName("published")[0].textContent);
+                const startDateTime = new Date(startDate);
+                const endDateTime = new Date(endDate);
+
+                if (published >= startDateTime && published <= endDateTime) {
+                    results.push({
+                        title: entry.getElementsByTagName("title")[0].textContent.trim(),
+                        authors: Array.from(entry.getElementsByTagName("author")).map(author => 
+                            author.getElementsByTagName("name")[0].textContent.trim()),
+                        summary: entry.getElementsByTagName("summary")[0].textContent.trim(),
+                        published: published.toISOString().split('T')[0],
+                        link: entry.getElementsByTagName("id")[0].textContent.trim(),
+                        pdfLink: Array.from(entry.getElementsByTagName("link")).find(link => link.getAttribute("title") === "pdf")?.getAttribute("href") || ''
+                    });
+                }
+            }
+
+            return results;
+        }
+
+        // Moonshot API调用函数
+        async function getSummary(text) {
+            try {
+                const response = await fetch('https://api.moonshot.cn/v1/chat/completions', {
+                    method: 'POST',
+                    headers: {
+                        'Content-Type': 'application/json',
+                        'Authorization': `Bearer ${API_KEY}`
+                    },
+                    body: JSON.stringify({
+                        model: "moonshot-v1-8k",
+                        messages: [
+                            {
+                                role: "system",
+                                content: "你是一个专业的学术论文分析助手。请用中文三句话简明扼要地总结论文的主要内容，包括：1.研究目的 2.采用方法 3.主要结论"
+                            },
+                            {
+                                role: "user",
+                                content: `请用三句话总结以下论文：\n\n${text}`
+                            }
+                        ],
+                        temperature: 0.3
+                    })
+                });
+
+                const data = await response.json();
+
+                if (!response.ok) {
+                    const errorMsg = data.error?.message || '未知错误';
+                    throw new Error(`Moonshot API请求失败: ${errorMsg}`);
+                }
+
+                return data.choices[0].message.content.trim();
+            } catch (error) {
+                console.error('getSummary 错误：', error);
+                throw error; // 重新抛出错误，以便上层捕获
+            }
+        }
+
+        // 处理任务，确保顺序发送请求，并加入重试机制
+        async function processSequentially(papers, onProgress, displayResultFunc) {
+            const total = papers.length;
+            isProcessing = true;
+
+            for (; currentIndex < papers.length; currentIndex++) {
+                if (isStopped) {
+                    isProcessing = false;
+                    console.log('摘要生成已停止。');
+                    return;
+                }
+
+                const paper = papers[currentIndex];
+                let attempt = 0;
+                const maxRetries = 5;
+                let waitTime = 3000; // 初始等待时间3秒
+
+                while (attempt < maxRetries) {
+                    try {
+                        const summary = await getSummary(paper.summary);
+                        paper.generatedSummary = summary; // 保存生成的摘要
+                        displayResultFunc(paper, summary);
+                        break; // 成功后跳出重试循环
+                    } catch (error) {
+                        attempt++;
+                        console.error(`处理论文 "${paper.title}" 时出错（第${attempt}次尝试）:`, error);
+
+                        if (attempt < maxRetries) {
+                            console.warn(`等待${waitTime / 1000}秒后重试...`);
+                            await sleep(waitTime); // 等待后重试
+                            waitTime *= 2; // 指数退避
+                        } else {
+                            console.error(`达到最大重试次数。论文 "${paper.title}" 的摘要生成失败。`);
+                            displayResultFunc(paper, null, '摘要生成失败: 达到最大重试次数');
+                        }
+                    }
+                }
+
+                if (onProgress) {
+                    onProgress(currentIndex + 1, total);
+                }
+
+                // 等待3秒后处理下一个请求
+                await sleep(3000);
+            }
+
+            isProcessing = false;
+            // 隐藏控制按钮
+            document.getElementById('stopButton').style.display = 'none';
+            document.getElementById('startButton').style.display = 'none';
+        }
+
+        // 更新进度条和进度文本
+        function updateProgress(current, total) {
+            const progressBar = document.getElementById('progressBar');
+            const progressText = document.getElementById('progressText');
+            const percentage = total === 0 ? 0 : Math.floor((current / total) * 100);
+            progressBar.style.width = `${percentage}%`;
+            progressBar.setAttribute('aria-valuenow', percentage);
+            progressBar.textContent = `${percentage}%`;
+            progressText.textContent = `${current} / ${total} 完成`;
+        }
+
+        // 更新结果到页面
+        function displayResult(paper, summary, error = null) {
+            const results = document.getElementById('results');
+            const paperElement = document.createElement('div');
+            paperElement.classList.add('mb-4');
+            paperElement.innerHTML = `
+                <p><strong>发布时间：</strong>${paper.published}</p>
+                <p><strong>标题：</strong>${paper.title}</p>
+                <p><strong>作者：</strong>${paper.authors.join(', ')}</p>
+                <p><strong>主要内容：</strong>${error ? `<span class="text-danger">${error}</span>` : summary}</p>
+                <p><strong>arXiv链接：</strong><a href="${paper.link}" target="_blank">${paper.link}</a></p>
+                <p><strong>PDF链接：</strong><a href="${paper.pdfLink}" target="_blank">${paper.pdfLink}</a></p>
+                <hr>
+            `;
+            results.appendChild(paperElement);
+        }
+
+        // 复制所有已生成的内容
+        async function copyAllSummaries() {
+            const results = document.getElementById('results');
+            if (!results) return;
+
+            const papersToCopy = selectedPapers.slice(0, currentIndex); // 获取已处理的论文
+
+            if (papersToCopy.length === 0) {
+                showAlert('copyErrorAlert', '当前没有可复制的内容。');
+                return;
+            }
+
+            let textToCopy = '';
+
+            papersToCopy.forEach(paper => {
+                let paperText = `发布时间：${paper.published}\n`;
+                paperText += `标题：${paper.title}\n`;
+                paperText += `作者：${paper.authors.join(', ')}\n`;
+                paperText += `主要内容：${paper.generatedSummary || '摘要生成失败'}\n`;
+                paperText += `arXiv链接：${paper.link}\n`;
+                paperText += `PDF链接：${paper.pdfLink}\n`;
+                paperText += `\n----------------------------------------\n\n`;
+                textToCopy += paperText;
+            });
+
+            try {
+                await navigator.clipboard.writeText(textToCopy);
+                showAlert('copyAlert');
+            } catch (err) {
+                console.error('复制失败:', err);
+                showAlert('copyErrorAlert');
+            }
+        }
+
+        // 显示提示信息
+        function showAlert(alertId, customMessage = null) {
+            const alertElement = document.getElementById(alertId);
+            if (alertElement) {
+                if (customMessage) {
+                    alertElement.innerHTML = `${customMessage}
+                        <button type="button" class="btn-close" data-bs-dismiss="alert" aria-label="关闭"></button>`;
+                }
+                alertElement.style.display = 'block';
+                // 自动隐藏提示信息 after 3 seconds
+                setTimeout(() => {
+                    const bsAlert = new bootstrap.Alert(alertElement);
+                    bsAlert.close();
+                }, 3000);
+            }
+        }
+
+        // 绑定复制按钮事件
+        document.getElementById('copyButton').addEventListener('click', copyAllSummaries);
+
+        // 搜索表单提交事件
+        document.getElementById('searchForm').addEventListener('submit', async (e) => {
+            e.preventDefault();
+            
+            const keyword = document.getElementById('keyword').value.trim();
+            const startDate = document.getElementById('startDate').value;
+            const endDate = document.getElementById('endDate').value;
+            
+            const loading = document.getElementById('loading');
+            const results = document.getElementById('results');
+            const selectForm = document.getElementById('selectForm');
+            const paperList = document.getElementById('paperList');
+            const totalPapers = document.getElementById('totalPapers');
+            const resultsCard = document.getElementById('resultsCard');
+            const controlButtons = document.getElementById('controlButtons');
+            const stopButton = document.getElementById('stopButton');
+            const startButton = document.getElementById('startButton');
+
+            // 重置状态
+            loading.classList.add('active');
+            results.innerHTML = '';
+            selectForm.style.display = 'none';
+            resultsCard.style.display = 'none';
+            paperList.innerHTML = '';
+            totalPapers.textContent = '';
+            controlButtons.style.display = 'none';
+            stopButton.style.display = 'none';
+            startButton.style.display = 'none';
+            isStopped = false;
+            isProcessing = false;
+            currentIndex = 0;
+
+            try {
+                // 搜索ArXiv论文
+                const papers = await searchArxiv(keyword, startDate, endDate);
+                allPapers = papers; // 保存所有论文
+
+                if (papers.length === 0) {
+                    results.innerHTML = `
+                        <div class="alert alert-warning">
+                            未找到符合条件的论文。<br>
+                            建议：<br>
+                            1. 扩大搜索时间范围<br>
+                            2. 尝试使用更通用的关键词<br>
+                            3. 检查关键词拼写是否正确
+                        </div>
+                    `;
+                    updateProgress(0, 0);
+                } else {
+                    // 显示选择表单
+                    selectForm.style.display = 'block';
+
+                    // 显示总数和列表
+                    totalPapers.textContent = `找到 ${papers.length} 篇符合条件的论文。请选择要生成摘要的数量：`;
+
+                    // 列出论文标题（限制显示前50条以防列表过长）
+                    const displayCount = Math.min(papers.length, 50);
+                    for (let i = 0; i < displayCount; i++) {
+                        const paper = papers[i];
+                        const listItem = document.createElement('li');
+                        listItem.classList.add('list-group-item');
+                        listItem.textContent = `${i + 1}. ${paper.title}`;
+                        paperList.appendChild(listItem);
+                    }
+
+                    if (papers.length > 50) {
+                        const moreItem = document.createElement('li');
+                        moreItem.classList.add('list-group-item');
+                        moreItem.textContent = `...（共 ${papers.length} 篇论文）`;
+                        paperList.appendChild(moreItem);
+                    }
+                }
+            } catch (error) {
+                console.error("处理过程中出错:", error);
+                results.innerHTML = `
+                    <div class="alert alert-danger">
+                        处理过程中出错，请重试...<br>
+                        错误信息: ${error.message}
+                    </div>
+                `;
+                updateProgress(0, 0);
+            } finally {
+                loading.classList.remove('active');
+            }
+        });
+
+        // 选择论文数量表单提交事件
+        document.getElementById('nForm').addEventListener('submit', async (e) => {
+            e.preventDefault();
+
+            const nInput = document.getElementById('nPapers');
+            let n = parseInt(nInput.value.trim(), 10);
+
+            if (isNaN(n) || n < 1) {
+                showAlert('copyErrorAlert', '请输入一个有效的正整数。');
+                return;
+            }
+
+            if (n > allPapers.length) {
+                showAlert('copyErrorAlert', `输入的数量超过了找到的论文总数（${allPapers.length}）。`);
+                return;
+            }
+
+            selectedPapers = allPapers.slice(0, n);
+            isStopped = false;
+            currentIndex = 0; // 重置当前索引
+
+            const loading = document.getElementById('loading');
+            const results = document.getElementById('results');
+            const resultsCard = document.getElementById('resultsCard');
+            const controlButtons = document.getElementById('controlButtons');
+            const stopButton = document.getElementById('stopButton');
+            const startButton = document.getElementById('startButton');
+
+            loading.classList.add('active');
+            results.innerHTML = '';
+            resultsCard.style.display = 'block';
+            controlButtons.style.display = 'block';
+            stopButton.style.display = 'inline-block';
+            startButton.style.display = 'none';
+            updateProgress(currentIndex, selectedPapers.length);
+
+            isProcessing = true;
+
+            try {
+                // 开始处理摘要
+                await processSequentially(selectedPapers, (completed, total) => {
+                    updateProgress(completed, total);
+                }, displayResult);
+            } catch (error) {
+                console.error("处理过程中出错:", error);
+                results.innerHTML = `
+                    <div class="alert alert-danger">
+                        处理过程中出错，请重试...<br>
+                        错误信息: ${error.message}
+                    </div>
+                `;
+                updateProgress(0, 0);
+            } finally {
+                loading.classList.remove('active');
+            }
+        });
+
+        // 停止按钮事件
+        document.getElementById('stopButton').addEventListener('click', () => {
+            if (!isProcessing) return; // 如果未在处理，则不执行
+            isStopped = true;
+            document.getElementById('stopButton').style.display = 'none';
+            document.getElementById('startButton').style.display = 'inline-block';
+            showAlert('copyAlert', '摘要生成已停止。');
+        });
+
+        // 开始按钮事件
+        document.getElementById('startButton').addEventListener('click', async () => {
+            if (!isProcessing) {
+                isStopped = false;
+                document.getElementById('stopButton').style.display = 'inline-block';
+                document.getElementById('startButton').style.display = 'none';
+                showAlert('copyAlert', '摘要生成已继续。');
+
+                const loading = document.getElementById('loading');
+                const resultsCard = document.getElementById('resultsCard');
+                const controlButtons = document.getElementById('controlButtons');
+
+                loading.classList.add('active');
+                resultsCard.style.display = 'block';
+                controlButtons.style.display = 'block';
+
+                isProcessing = true;
+
+                try {
+                    // 继续处理摘要
+                    await processSequentially(selectedPapers, (completed, total) => {
+                        updateProgress(completed, total);
+                    }, displayResult);
+                } catch (error) {
+                    console.error("处理过程中出错:", error);
+                    showAlert('copyErrorAlert', `处理过程中出错：${error.message}`);
+                } finally {
+                    loading.classList.remove('active');
+                }
+            }
+        });
+
+    </script>
+</body>
+</html>
