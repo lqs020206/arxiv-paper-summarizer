@@ -323,24 +323,35 @@
             const results = document.getElementById('results');
             if (!results) return;
 
-            const papersToCopy = selectedPapers.slice(0, currentIndex); // 获取已处理的论文
-
-            if (papersToCopy.length === 0) {
+            // 直接使用 results 中的所有内容
+            const paperElements = results.children;
+            if (paperElements.length === 0) {
                 showAlert('copyErrorAlert', '当前没有可复制的内容。');
                 return;
             }
 
             let textToCopy = '';
+            
+            // 遍历所有结果元素
+            Array.from(paperElements).forEach(element => {
+                if (element.innerHTML.includes('alert-danger')) return; // 跳过错误信息
+                
+                // 获取每个部分的文本
+                const publishDate = element.querySelector('p:nth-child(1)')?.textContent || '';
+                const title = element.querySelector('p:nth-child(2)')?.textContent || '';
+                const authors = element.querySelector('p:nth-child(3)')?.textContent || '';
+                const content = element.querySelector('p:nth-child(4)')?.textContent || '';
+                const arxivLink = element.querySelector('p:nth-child(5)')?.textContent || '';
+                const pdfLink = element.querySelector('p:nth-child(6)')?.textContent || '';
 
-            papersToCopy.forEach(paper => {
-                let paperText = `发布时间：${paper.published}\n`;
-                paperText += `标题：${paper.title}\n`;
-                paperText += `作者：${paper.authors.join(', ')}\n`;
-                paperText += `主要内容：${paper.generatedSummary || '摘要生成失败'}\n`;
-                paperText += `arXiv链接：${paper.link}\n`;
-                paperText += `PDF链接：${paper.pdfLink}\n`;
-                paperText += `\n----------------------------------------\n\n`;
-                textToCopy += paperText;
+                // 组合文本
+                textToCopy += `${publishDate}\n`;
+                textToCopy += `${title}\n`;
+                textToCopy += `${authors}\n`;
+                textToCopy += `${content}\n`;
+                textToCopy += `${arxivLink}\n`;
+                textToCopy += `${pdfLink}\n`;
+                textToCopy += `\n----------------------------------------\n\n`;
             });
 
             try {
@@ -421,7 +432,7 @@
                 return;
             }
             
-            const selectedPapers = selectedIndexes.map(index => allPapers[index]);
+            selectedPapers = selectedIndexes.map(index => allPapers[index]); // 更新 selectedPapers
             
             // 显示处理界面
             const loading = document.getElementById('loading');
