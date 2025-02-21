@@ -79,6 +79,21 @@
             </div>
         </div>
 
+        <!-- 在搜索结果显示区域之前添加论文选择区域 -->
+        <div class="card mb-4" id="paperSelectionCard" style="display: none;">
+            <div class="card-body">
+                <h5 class="card-title">选择要处理的论文</h5>
+                <div class="mb-3">
+                    <button class="btn btn-sm btn-secondary me-2" id="selectAllBtn">全选</button>
+                    <button class="btn btn-sm btn-secondary me-2" id="deselectAllBtn">取消全选</button>
+                    <button class="btn btn-primary" id="processSelectedBtn">处理选中论文</button>
+                </div>
+                <div id="paperCheckboxList" class="list-group">
+                    <!-- 论文选择列表将在这里动态生成 -->
+                </div>
+            </div>
+        </div>
+
         <!-- 加载提示 -->
         <div class="loading" id="loading">
             <div class="alert alert-info">
@@ -357,6 +372,84 @@
         // 绑定复制按钮事件
         document.getElementById('copyButton').addEventListener('click', copyAllSummaries);
 
+        // 在displayResult函数之前添加新的函数
+        function displayPaperSelectionList(papers) {
+            const paperSelectionCard = document.getElementById('paperSelectionCard');
+            const paperCheckboxList = document.getElementById('paperCheckboxList');
+            paperCheckboxList.innerHTML = '';
+            
+            papers.forEach((paper, index) => {
+                const checkboxItem = document.createElement('div');
+                checkboxItem.classList.add('list-group-item');
+                checkboxItem.innerHTML = `
+                    <div class="form-check">
+                        <input class="form-check-input paper-checkbox" type="checkbox" value="${index}" id="paper${index}">
+                        <label class="form-check-label" for="paper${index}">
+                            <strong>${paper.title}</strong><br>
+                            <small class="text-muted">作者：${paper.authors.join(', ')}<br>
+                            发布日期：${paper.published}</small>
+                        </label>
+                    </div>
+                `;
+                paperCheckboxList.appendChild(checkboxItem);
+            });
+            
+            paperSelectionCard.style.display = 'block';
+        }
+
+        // 添加全选/取消全选功能
+        document.getElementById('selectAllBtn').addEventListener('click', () => {
+            document.querySelectorAll('.paper-checkbox').forEach(checkbox => {
+                checkbox.checked = true;
+            });
+        });
+
+        document.getElementById('deselectAllBtn').addEventListener('click', () => {
+            document.querySelectorAll('.paper-checkbox').forEach(checkbox => {
+                checkbox.checked = false;
+            });
+        });
+
+        // 处理选中论文按钮事件
+        document.getElementById('processSelectedBtn').addEventListener('click', async () => {
+            const selectedIndexes = Array.from(document.querySelectorAll('.paper-checkbox:checked')).map(checkbox => 
+                parseInt(checkbox.value)
+            );
+            
+            if (selectedIndexes.length === 0) {
+                showAlert('copyErrorAlert', '请至少选择一篇论文进行处理');
+                return;
+            }
+            
+            const selectedPapers = selectedIndexes.map(index => allPapers[index]);
+            
+            // 显示处理界面
+            const loading = document.getElementById('loading');
+            const results = document.getElementById('results');
+            const resultsCard = document.getElementById('resultsCard');
+            
+            loading.classList.add('active');
+            results.innerHTML = '';
+            resultsCard.style.display = 'block';
+            updateProgress(0, selectedPapers.length);
+            
+            try {
+                await processSequentially(selectedPapers, (completed, total) => {
+                    updateProgress(completed, total);
+                }, displayResult);
+            } catch (error) {
+                console.error("处理过程中出错:", error);
+                results.innerHTML = `
+                    <div class="alert alert-danger">
+                        处理过程中出错，请重试...<br>
+                        错误信息: ${error.message}
+                    </div>
+                `;
+            } finally {
+                loading.classList.remove('active');
+            }
+        });
+
         // 搜索表单提交事件
         document.getElementById('searchForm').addEventListener('submit', async (e) => {
             e.preventDefault();
@@ -406,28 +499,18 @@
                     `;
                     updateProgress(0, 0);
                 } else {
-                    // 显示选择表单
-                    selectForm.style.display = 'block';
-
-                    // 显示总数和列表
-                    totalPapers.textContent = `找到 ${papers.length} 篇符合条件的论文。请选择要生成摘要的数量：`;
-
-                    // 列出论文标题（限制显示前50条以防列表过长）
-                    const displayCount = Math.min(papers.length, 50);
-                    for (let i = 0; i < displayCount; i++) {
-                        const paper = papers[i];
-                        const listItem = document.createElement('li');
-                        listItem.classList.add('list-group-item');
-                        listItem.textContent = `${i + 1}. ${paper.title}`;
-                        paperList.appendChild(listItem);
-                    }
-
-                    if (papers.length > 50) {
-                        const moreItem = document.createElement('li');
-                        moreItem.classList.add('list-group-item');
-                        moreItem.textContent = `...（共 ${papers.length} 篇论文）`;
-                        paperList.appendChild(moreItem);
-                    }
+                    // 显示论文选择列表
+                    displayPaperSelectionList(papers);
+                    
+                    // 显示搜索基本信息
+                    const info = document.createElement('div');
+                    info.innerHTML = `
+                        <p><strong>搜索关键词:</strong> ${keyword}</p>
+                        <p><strong>时间范围:</strong> ${startDate} 至 ${endDate}</p>
+                        <p><strong>找到论文数量:</strong> ${papers.length}</p>
+                        <hr>
+                    `;
+                    results.appendChild(info);
                 }
             } catch (error) {
                 console.error("处理过程中出错:", error);
