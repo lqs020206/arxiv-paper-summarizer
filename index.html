@@ -1,0 +1,468 @@
+<!DOCTYPE html>
+<html lang="zh">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>ArXiv论文摘要生成器 (Fix v3.1)</title>
+    <link href="https://cdn.jsdelivr.net/npm/bootstrap@5.1.3/dist/css/bootstrap.min.css" rel="stylesheet">
+    <style>
+        .loading { display: none; }
+        .loading.active { display: block; }
+        #results { white-space: pre-wrap; }
+        .progress-container { margin-top: 20px; }
+        .card-title { display: flex; justify-content: space-between; align-items: center; }
+        #selectForm, #paperSelectionCard, #controlButtons, #resultsCard { display: none; }
+        
+        /* 调试面板样式 */
+        #debugPanel {
+            margin-top: 10px;
+            padding: 15px;
+            background-color: #f8f9fa;
+            border: 1px solid #dee2e6;
+            border-radius: 5px;
+            max-height: 300px;
+            overflow-y: auto;
+            font-family: monospace;
+            font-size: 12px;
+            color: #333;
+            display: none; /* 【修改点】默认隐藏 */
+        }
+        .log-entry { margin-bottom: 4px; border-bottom: 1px dashed #eee; }
+        .log-pass { color: green; font-weight: bold; }
+        .log-fail { color: #dc3545; }
+        .log-info { color: #0d6efd; }
+        .log-warn { color: #fd7e14; }
+        .log-wait { color: #6c757d; font-style: italic; }
+    </style>
+</head>
+<body>
+    <div class="container mt-5 mb-5">
+        <h1 class="mb-4">ArXiv论文摘要生成器 <span class="badge bg-secondary fs-6">v3.1</span></h1>
+        
+        <div class="card mb-4">
+            <div class="card-body">
+                <form id="searchForm">
+                    <div class="mb-3">
+                        <label for="keyword" class="form-label">关键词</label>
+                        <input type="text" class="form-control" id="keyword" placeholder="例如: wireless communication" required>
+                    </div>
+                    <div class="row">
+                        <div class="col-md-4 mb-3">
+                            <label for="startDate" class="form-label">开始日期</label>
+                            <input type="date" class="form-control" id="startDate" required>
+                        </div>
+                        <div class="col-md-4 mb-3">
+                            <label for="endDate" class="form-label">结束日期</label>
+                            <input type="date" class="form-control" id="endDate" required>
+                        </div>
+                        <div class="col-md-4 mb-3">
+                            <label for="searchDepth" class="form-label">搜索深度</label>
+                            <select class="form-select" id="searchDepth">
+                                <option value="100">前 100 篇 (快速)</option>
+                                <option value="300" selected>前 300 篇 (推荐)</option>
+                                <option value="500">前 500 篇 (深搜)</option>
+                                <option value="1000">前 1000 篇 (极慢)</option>
+                            </select>
+                        </div>
+                    </div>
+                    <button type="submit" class="btn btn-primary">开始搜索</button>
+                </form>
+            </div>
+        </div>
+
+        <div class="card mb-4" id="paperSelectionCard">
+            <div class="card-body">
+                <h5 class="card-title">选择要处理的论文 <span id="paperCountBadge" class="badge bg-primary rounded-pill">0</span></h5>
+                <div class="mb-3">
+                    <button class="btn btn-sm btn-secondary me-2" id="selectAllBtn">全选</button>
+                    <button class="btn btn-sm btn-secondary me-2" id="deselectAllBtn">取消全选</button>
+                    <button class="btn btn-primary" id="processSelectedBtn">处理选中论文</button>
+                </div>
+                <div id="paperCheckboxList" class="list-group" style="max-height: 500px; overflow-y: auto;">
+                </div>
+            </div>
+        </div>
+
+        <div class="loading" id="loading">
+            <div class="alert alert-info">
+                <span class="spinner-border spinner-border-sm" role="status" aria-hidden="true"></span>
+                <span id="loadingText">正在连接数据库...</span>
+            </div>
+        </div>
+
+        <div class="progress-container">
+            <div class="progress">
+                <div id="progressBar" class="progress-bar" role="progressbar" style="width: 0%;">0%</div>
+            </div>
+            <p id="progressText" class="mt-2">0 / 0 完成</p>
+        </div>
+
+        <div class="control-buttons mb-4" id="controlButtons">
+            <button id="stopButton" class="btn btn-danger">停止</button>
+            <button id="startButton" class="btn btn-primary" style="display: none;">继续</button>
+        </div>
+
+        <div class="card mt-4 mb-4" id="resultsCard">
+            <div class="card-body">
+                <div class="d-flex justify-content-between align-items-center">
+                    <h5 class="card-title mb-0">摘要结果</h5>
+                    <button id="copyButton" class="btn btn-sm btn-secondary">一键复制</button>
+                </div>
+                <div id="results" class="mt-3"></div>
+            </div>
+        </div>
+
+        <div class="d-flex justify-content-end">
+            <button id="toggleDebugBtn" class="btn btn-outline-secondary btn-sm" type="button">
+                显示调试日志
+            </button>
+        </div>
+
+        <div id="debugPanel">
+            <strong>调试日志 (Debug Log):</strong><br>
+            <div id="debugContent">等待操作...</div>
+        </div>
+    </div>
+
+    <div id="copyAlert" class="alert alert-success alert-dismissible fade show" role="alert" style="position: fixed; top: 20px; right: 20px; display: none; z-index: 9999;">
+        已成功复制！<button type="button" class="btn-close" data-bs-dismiss="alert" aria-label="关闭"></button>
+    </div>
+    <div id="copyErrorAlert" class="alert alert-danger alert-dismissible fade show" role="alert" style="position: fixed; top: 20px; right: 20px; display: none; z-index: 9999;">
+        操作失败！<button type="button" class="btn-close" data-bs-dismiss="alert" aria-label="关闭"></button>
+    </div>
+
+    <script src="https://cdn.jsdelivr.net/npm/bootstrap@5.1.3/dist/js/bootstrap.bundle.min.js"></script>
+    <script>
+        // ============================================================
+        const WORKER_URL = 'https://arxiv.ghgftyu3.workers.dev'; 
+        // ============================================================
+
+        function sleep(ms) { return new Promise(resolve => setTimeout(resolve, ms)); }
+        
+        function debugLog(msg, type = 'normal') {
+            const content = document.getElementById('debugContent');
+            const entry = document.createElement('div');
+            entry.className = 'log-entry';
+            if (type === 'pass') entry.classList.add('log-pass');
+            if (type === 'fail') entry.classList.add('log-fail');
+            if (type === 'info') entry.classList.add('log-info');
+            if (type === 'warn') entry.classList.add('log-warn');
+            if (type === 'wait') entry.classList.add('log-wait');
+            const time = new Date().toLocaleTimeString();
+            entry.textContent = `[${time}] ${msg}`;
+            content.insertBefore(entry, content.firstChild);
+        }
+
+        // 【新增】控制日志显示/隐藏
+        document.getElementById('toggleDebugBtn').addEventListener('click', function() {
+            const panel = document.getElementById('debugPanel');
+            if (panel.style.display === 'none' || panel.style.display === '') {
+                panel.style.display = 'block';
+                this.textContent = '隐藏调试日志';
+            } else {
+                panel.style.display = 'none';
+                this.textContent = '显示调试日志';
+            }
+        });
+
+        document.addEventListener('DOMContentLoaded', () => {
+            const today = new Date();
+            document.getElementById('endDate').valueAsDate = today;
+            const lastYear = new Date();
+            lastYear.setFullYear(today.getFullYear() - 1);
+            document.getElementById('startDate').valueAsDate = lastYear;
+        });
+
+        let allPapers = [];
+        let selectedPapers = [];
+        let isStopped = false;
+        let isProcessing = false;
+        let currentIndex = 0;
+
+        // === 核心搜索函数：高稳定版 ===
+        async function searchArxiv(keyword, startDate, endDate) {
+            const depth = parseInt(document.getElementById('searchDepth').value);
+            debugLog(`开始搜索... 深度: Top ${depth} | 关键词: "${keyword}"`, 'info');
+            
+            const startYear = new Date(startDate).getFullYear();
+            const endYear = new Date(endDate).getFullYear();
+            const queryWithYear = `${keyword} year:${startYear}-${endYear}`;
+            
+            let combinedData = [];
+            const loadingText = document.getElementById('loadingText');
+
+            // 循环抓取
+            for (let offset = 0; offset < depth; offset += 100) {
+                if (loadingText) loadingText.textContent = `正在抓取第 ${(offset/100)+1} 页 (Offset ${offset})...`;
+                debugLog(`发起请求: Offset ${offset}`, 'info');
+
+                let retryCount = 0;
+                const maxRetries = 2; // 增加重试次数
+                let success = false;
+
+                while (retryCount <= maxRetries && !success) {
+                    try {
+                        const url = `${WORKER_URL}/arxiv?search_query=${encodeURIComponent(queryWithYear)}&offset=${offset}`;
+                        const response = await fetch(url);
+                        
+                        if (response.ok) {
+                            const json = await response.json();
+                            if (json.data && json.data.length > 0) {
+                                combinedData = combinedData.concat(json.data);
+                                debugLog(`✅ Offset ${offset}: 成功获取 ${json.data.length} 条`, 'pass');
+                                success = true;
+                            } else {
+                                debugLog(`⚠️ Offset ${offset}: 返回空数据，停止翻页`, 'warn');
+                                offset = depth; // 结束
+                                success = true;
+                            }
+                        } else if (response.status === 429) {
+                            debugLog(`🛑 Offset ${offset}: 触发限流 (429)，冷却 10秒后重试...`, 'warn');
+                            await sleep(10000); 
+                            retryCount++;
+                        } else {
+                            throw new Error(`HTTP ${response.status}`);
+                        }
+                    } catch (err) {
+                        debugLog(`❌ Offset ${offset}: 网络错误 ${err.message}，等待 3秒后重试`, 'fail');
+                        retryCount++;
+                        await sleep(3000);
+                    }
+                }
+
+                if (!success) {
+                    debugLog(`❌ Offset ${offset}: 重试多次失败，跳过此页`, 'fail');
+                }
+
+                // 常规间隔 4 秒
+                if (offset < depth - 100) {
+                    debugLog(`...安全等待 4 秒...`, 'wait');
+                    await sleep(4000); 
+                }
+            }
+
+            debugLog(`原始数据抓取完成，共获得 ${combinedData.length} 篇候选论文`, 'info');
+            
+            if (combinedData.length === 0) return [];
+
+            // 去重
+            const uniqueMap = new Map();
+            combinedData.forEach(p => {
+                if(p.paperId) uniqueMap.set(p.paperId, p);
+            });
+            const uniquePapers = Array.from(uniqueMap.values());
+            debugLog(`去重后剩余 ${uniquePapers.length} 篇，开始日期精确筛选...`, 'info');
+
+            const results = [];
+            const startObj = new Date(startDate);
+            const endObj = new Date(endDate);
+            endObj.setHours(23, 59, 59, 999); 
+
+            let passCount = 0;
+
+            for (let paper of uniquePapers) {
+                if (!paper.abstract) continue; 
+
+                let isMatch = false;
+                let paperDateStr = "未知";
+
+                if (paper.publicationDate) {
+                    paperDateStr = paper.publicationDate;
+                    const paperDate = new Date(paper.publicationDate);
+                    if (paperDate >= startObj && paperDate <= endObj) isMatch = true;
+                } else if (paper.year) {
+                    paperDateStr = `${paper.year} (仅年份)`;
+                    const pYear = parseInt(paper.year);
+                    if (pYear >= startYear && pYear <= endYear) isMatch = true;
+                }
+
+                if (isMatch) {
+                    debugLog(`[保留] ${paperDateStr} | ${paper.title.substring(0, 30)}...`, 'pass');
+                    const pdfLink = paper.openAccessPdf ? paper.openAccessPdf.url : (paper.url || '');
+                    const authors = paper.authors ? paper.authors.map(a => a.name) : ['Unknown'];
+
+                    results.push({
+                        title: paper.title,
+                        authors: authors,
+                        summary: paper.abstract,
+                        published: paper.publicationDate || paper.year.toString(),
+                        link: paper.url,
+                        pdfLink: pdfLink
+                    });
+                    passCount++;
+                }
+            }
+
+            debugLog(`筛选完成: 最终保留 ${passCount} 篇`, 'info');
+            return results;
+        }
+
+        async function getSummary(text) {
+            const response = await fetch(`${WORKER_URL}/moonshot`, {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({
+                    model: "moonshot-v1-8k",
+                    messages: [
+                        { role: "system", content: "你是一个专业的学术论文分析助手。请用中文三句话简明扼要地总结论文的主要内容，包括：1.研究目的 2.采用方法 3.主要结论" },
+                        { role: "user", content: `请用三句话总结以下论文：\n\n${text}` }
+                    ],
+                    temperature: 0.3
+                })
+            });
+
+            const data = await response.json();
+            if (!response.ok) throw new Error(data.error?.message || 'API请求失败');
+            return data.choices[0].message.content.trim();
+        }
+
+        // UI Logic
+        document.getElementById('searchForm').addEventListener('submit', async (e) => {
+            e.preventDefault();
+            resetUI();
+            document.getElementById('debugContent').innerHTML = ''; 
+            
+            const keyword = document.getElementById('keyword').value.trim();
+            const startDate = document.getElementById('startDate').value;
+            const endDate = document.getElementById('endDate').value;
+            
+            document.getElementById('loading').classList.add('active');
+            
+            try {
+                const papers = await searchArxiv(keyword, startDate, endDate);
+                allPapers = papers;
+                
+                if (papers.length === 0) {
+                    showAlert('copyErrorAlert', '未找到符合条件的论文。');
+                } else {
+                    displayPaperSelectionList(papers);
+                }
+            } catch (error) {
+                console.error(error);
+                debugLog("发生错误: " + error.message, 'fail');
+                showAlert('copyErrorAlert', `搜索出错: ${error.message}`);
+            } finally {
+                document.getElementById('loading').classList.remove('active');
+            }
+        });
+
+        document.getElementById('processSelectedBtn').addEventListener('click', async () => {
+            const checkboxes = document.querySelectorAll('.paper-checkbox:checked');
+            if (checkboxes.length === 0) return showAlert('copyErrorAlert', '请至少选择一篇论文');
+            selectedPapers = Array.from(checkboxes).map(cb => allPapers[parseInt(cb.value)]);
+            startProcessing();
+        });
+
+        function displayPaperSelectionList(papers) {
+            const list = document.getElementById('paperCheckboxList');
+            document.getElementById('paperCountBadge').textContent = papers.length;
+            list.innerHTML = '';
+            papers.forEach((paper, index) => {
+                const item = document.createElement('div');
+                item.className = 'list-group-item';
+                item.innerHTML = `
+                    <div class="form-check">
+                        <input class="form-check-input paper-checkbox" type="checkbox" value="${index}" id="paper${index}">
+                        <label class="form-check-label" for="paper${index}">
+                            <strong>${paper.title}</strong><br>
+                            <small class="text-muted">日期: ${paper.published} | 作者: ${paper.authors.join(', ')}</small>
+                        </label>
+                    </div>`;
+                list.appendChild(item);
+            });
+            document.getElementById('paperSelectionCard').style.display = 'block';
+        }
+
+        async function startProcessing() {
+            document.getElementById('paperSelectionCard').style.display = 'none';
+            document.getElementById('resultsCard').style.display = 'block';
+            document.getElementById('controlButtons').style.display = 'block';
+            document.getElementById('stopButton').style.display = 'inline-block';
+            document.getElementById('startButton').style.display = 'none';
+            document.getElementById('results').innerHTML = '';
+            isProcessing = true;
+            isStopped = false;
+            currentIndex = 0;
+            updateProgress(0, selectedPapers.length);
+            await processQueue();
+        }
+
+        async function processQueue() {
+            const total = selectedPapers.length;
+            for (; currentIndex < total; currentIndex++) {
+                if (isStopped) { isProcessing = false; return; }
+                const paper = selectedPapers[currentIndex];
+                debugLog(`正在生成摘要: ${paper.title}`, 'info');
+                try {
+                    const summary = await getSummary(paper.summary);
+                    displayResult(paper, summary);
+                    debugLog(`摘要生成成功`, 'pass');
+                } catch (error) {
+                    displayResult(paper, null, error.message);
+                    debugLog(`摘要失败: ${error.message}`, 'fail');
+                }
+                updateProgress(currentIndex + 1, total);
+                if (currentIndex < total - 1) await sleep(2000); 
+            }
+            isProcessing = false;
+            document.getElementById('stopButton').style.display = 'none';
+            debugLog("所有任务处理完成。", 'pass');
+        }
+
+        function displayResult(paper, summary, error = null) {
+            const div = document.createElement('div');
+            div.className = 'mb-4 border-bottom pb-3';
+            let linksHtml = `<a href="${paper.link}" target="_blank">Semantic Scholar详情</a>`;
+            if (paper.pdfLink) linksHtml = `<a href="${paper.pdfLink}" target="_blank"><strong>[PDF下载]</strong></a> | ` + linksHtml;
+            div.innerHTML = `
+                <p><strong>标题：</strong>${paper.title}</p>
+                <p><strong>日期：</strong>${paper.published}</p>
+                <p><strong>内容：</strong>${error ? `<span class="text-danger">错误: ${error}</span>` : summary}</p>
+                <p>${linksHtml}</p>
+            `;
+            document.getElementById('results').appendChild(div);
+        }
+
+        document.getElementById('selectAllBtn').onclick = () => document.querySelectorAll('.paper-checkbox').forEach(c => c.checked = true);
+        document.getElementById('deselectAllBtn').onclick = () => document.querySelectorAll('.paper-checkbox').forEach(c => c.checked = false);
+        
+        document.getElementById('stopButton').onclick = () => {
+            if (isProcessing) { isStopped = true; document.getElementById('stopButton').style.display = 'none'; document.getElementById('startButton').style.display = 'inline-block'; debugLog("任务已暂停", 'fail'); }
+        };
+        document.getElementById('startButton').onclick = () => {
+            if (!isProcessing) { isStopped = false; isProcessing = true; document.getElementById('stopButton').style.display = 'inline-block'; document.getElementById('startButton').style.display = 'none'; debugLog("任务继续", 'info'); processQueue(); }
+        };
+        document.getElementById('copyButton').onclick = async () => {
+            const text = document.getElementById('results').innerText;
+            if(!text) return;
+            try { await navigator.clipboard.writeText(text); showAlert('copyAlert'); } 
+            catch { showAlert('copyErrorAlert', '复制失败'); }
+        };
+
+        function updateProgress(current, total) {
+            const pct = Math.floor((current / total) * 100);
+            document.getElementById('progressBar').style.width = `${pct}%`;
+            document.getElementById('progressBar').textContent = `${pct}%`;
+            document.getElementById('progressText').textContent = `${current} / ${total} 完成`;
+        }
+
+        function resetUI() {
+            document.getElementById('paperSelectionCard').style.display = 'none';
+            document.getElementById('resultsCard').style.display = 'none';
+            document.getElementById('controlButtons').style.display = 'none';
+            document.getElementById('results').innerHTML = '';
+        }
+
+        function showAlert(id, msg) {
+            const el = document.getElementById(id);
+            if (!el) { console.warn(`Missing alert: ${id}`); alert(msg); return; }
+            if (msg) {
+                if (el.childNodes.length > 0 && el.childNodes[0].nodeType === 3) el.childNodes[0].nodeValue = msg + " ";
+                else el.prepend(msg + " ");
+            }
+            el.style.display = 'block';
+            setTimeout(() => { if(el) el.style.display = 'none'; }, 3000);
+        }
+    </script>
+</body>
+</html>
